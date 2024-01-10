@@ -9,6 +9,8 @@ import matplotlib.cm as cm
 import matplotlib.image as mpimg
 import numpy as np
 
+from zoe_depth import get_zoe_model
+
 from scipy import ndimage
 from scipy.optimize import minimize
 
@@ -296,6 +298,7 @@ def visualize_point_cloud(pcd):
 
 if __name__ == '__main__':
     dpt_model = DPT()
+    zoe_model = get_zoe_model()
 
     root_img_dir = 'bunny_imgs'
     root_colmap_depth_dir = 'colmap_depth'
@@ -309,18 +312,20 @@ if __name__ == '__main__':
         
         image = open_image(full_path)
 
-        dpt_depth = dpt_model(image, visualize=False)
+        # zoe_depth = dpt_model(image, visualize=False)
+        
+        zoe_depth = zoe_model.infer_pil(image)
 
 
         # get colmap depth
         colmap_depth = get_colmap_depth(root_colmap_depth_dir, idx, scale=1)
         # get scale factor
         
-        scale, offset = compute_scale_and_offset(colmap_depth, dpt_depth)
+        scale, offset = compute_scale_and_offset(colmap_depth, zoe_depth)
         print(scale, offset)
         
         
-        final_depthv1 = scale * dpt_depth + offset
+        final_depthv1 = (scale * zoe_depth) + offset
         
         # final_depth = optimize_depthv2(final_depthv1, colmap_depth, sparse_weight=0.1, iterations=100, geometry_weight=0.000)
         # final_depth = final_depthv1
@@ -370,7 +375,7 @@ if __name__ == '__main__':
             # Show the plot
             plt.show()
         
-        final_depth_int = (scale_factor * colmap_depth).astype(np.uint16)
+        final_depth_int = (scale_factor * final_depthv1).astype(np.uint16)
         
         if not os.path.exists('dense_depth_imgs'):
             os.mkdir('dense_depth_imgs')

@@ -12,6 +12,7 @@ from dinov2.eval.depth.models import build_depther
 from transformers import AutoImageProcessor, DPTForDepthEstimation
 
 from transformers import DPTFeatureExtractor, DPTForDepthEstimation
+from zoe_depth import get_zoe_model
 
 
 from PIL import Image
@@ -64,7 +65,12 @@ class DPT():
         return output
         
 if __name__ == '__main__':
+    
+    zoe_visualize = True
+    
     dpt_model = DPT()
+    
+    zoe_model = get_zoe_model()
 
     root_img_dir = 'bunny_imgs'
 
@@ -75,4 +81,12 @@ if __name__ == '__main__':
         image = open_image(full_path)
 
         depth = dpt_model(image)
+        
+        zoe_depth = zoe_model.infer_pil(image)
+        
+        if zoe_visualize:
+            formatted = (zoe_depth * 255 / np.max(zoe_depth)).astype('uint8')
+            depth = Image.fromarray(formatted)
+            plt.imshow(depth)
+            plt.show()
 

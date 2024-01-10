@@ -1,11 +1,13 @@
 import torch
 
-repo = "isl-org/ZoeDepth"
-# Zoe_N
-model_zoe_n = torch.hub.load(repo, "ZoeD_N", pretrained=True)
 
-# Zoe_K
-model_zoe_k = torch.hub.load(repo, "ZoeD_K", pretrained=True)
 
-# Zoe_NK
-model_zoe_nk = torch.hub.load(repo, "ZoeD_NK", pretrained=True)
+def get_zoe_model():
+    repo = "isl-org/ZoeDepth"
+    # Zoe_N
+    model_zoe_nk = torch.hub.load(repo, "ZoeD_NK", pretrained=True)
+
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    zoe = model_zoe_nk.to(DEVICE)
+    
+    return zoe
