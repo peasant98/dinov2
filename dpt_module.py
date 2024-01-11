@@ -41,7 +41,7 @@ class DPT():
 
         print('Successfully loaded model!')
 
-    def __call__(self, image, visualize=True):
+    def __call__(self, image, visualize=False):
         inputs = self.feature_extractor(images=image, return_tensors="pt")
 
         with torch.no_grad():
