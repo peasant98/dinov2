@@ -58,7 +58,7 @@ class VisualPipeline:
             root_img_dir (_type_): _description_
         """
         self.dpt_model = DPT()
-        # self.zoe_model = get_zoe_model()
+        self.zoe_model = get_zoe_model()
         self.root_img_dir = root_img_dir
         self.colmap_depth_dir = colmap_depth_dir
         
@@ -182,7 +182,7 @@ class VisualPipeline:
         plt.show()
         
         
-    def predict_depth_from_image(self, image, model_type='dpt'):
+    def predict_depth_from_image(self, image, model_type='zoe'):
         if model_type == 'zoe':
             depth = self.zoe_model.infer_pil(image)
         else:
