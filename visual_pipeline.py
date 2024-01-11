@@ -7,6 +7,7 @@ import numpy as np
 from dpt_module import DPT
 from utils import save_depth_image_matrix_as_npy
 from zoe_depth import get_zoe_model
+from create_uncertainty_from_depth import compute_uncertainty_map_with_edges
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -57,7 +58,7 @@ class VisualPipeline:
             root_img_dir (_type_): _description_
         """
         self.dpt_model = DPT()
-        self.zoe_model = get_zoe_model()
+        # self.zoe_model = get_zoe_model()
         self.root_img_dir = root_img_dir
         self.colmap_depth_dir = colmap_depth_dir
         
@@ -74,6 +75,15 @@ class VisualPipeline:
         
         if not os.path.exists(self.output_depth_path):
             os.mkdir(self.output_depth_path)
+
+        if not os.path.exists(f'{self.output_depth_path}_npy'):
+            os.mkdir(f'{self.output_depth_path}_npy')
+
+        if not os.path.exists(f'{self.output_depth_path}_uncertainty'):
+            os.mkdir(f'{self.output_depth_path}_uncertainty')
+
+        if not os.path.exists(f'{self.output_depth_path}_uncertainty_npy'):
+            os.mkdir(f'{self.output_depth_path}_uncertainty_npy')
         
     def get_images_and_colmap_depth_maps(self, scale=1):
         for idx, img_path in enumerate(self.img_paths):
@@ -108,20 +118,34 @@ class VisualPipeline:
             refined_depth = self.refine_depth(predicted_depth, colmap_depth)
             if visualize:
                 self.visualize(colmap_depth, predicted_depth, refined_depth)
-            # exit()
             
             # get image path 
-            # img_path = self.img_paths[i].split('.')[0][7:]
-            
+            img_path = self.img_paths[i].split('.')[0][7:]
+            print(img_path)
             # # construct file path and save as depth image
-            # final_depth_int = (self.scale_factor * refined_depth).astype(np.uint16)
-            # cv2.imwrite(f'{self.output_depth_path}_depth_img/{img_path}.png', final_depth_int)
-            
+            final_depth_int = (self.scale_factor * refined_depth).astype(np.uint16)
+            cv2.imwrite(f'{self.output_depth_path}/{img_path}.png', final_depth_int)
+            print(f'Saved depth image {self.output_depth_path}/{img_path}.png')
             # # save depth image matrix as npy
-            # if self.save_as_npy:
-            #     file_path = os.path.join(self.output_depth_path, f'{img_path}.npy')
-            #     self.save_depth_image_matrix_as_npy(refined_depth, file_path)
+            if self.save_as_npy:
+                file_path = os.path.join(f'{self.output_depth_path}_npy', f'{img_path}.npy')
+                save_depth_image_matrix_as_npy(refined_depth, file_path)
             
+            # compute uncertainty
+            uncertainty = compute_uncertainty_map_with_edges(refined_depth, colmap_depth, edge_weight=1.0, distance_uncertainty_weight=0.02, proximity_weight=3.0)
+            if visualize:
+                self.visualize(colmap_depth, refined_depth, uncertainty)
+
+            # create uncertainty depth image and npy file
+                
+            final_depth_uncertainty_int = (self.scale_factor * uncertainty).astype(np.uint16)
+            cv2.imwrite(f'{self.output_depth_path}_uncertainty/{img_path}.png', final_depth_uncertainty_int)
+            print(f'Saved depth uncertainty image {self.output_depth_path}_uncertainty/{img_path}.png')
+                
+            if self.save_as_npy:
+                file_path = os.path.join(f'{self.output_depth_path}_uncertainty_npy', f'{img_path}.npy')
+                save_depth_image_matrix_as_npy(uncertainty, file_path)
+
     def refine_depth(self, predicted_depth, colmap_depth):
             
         scale, offset = compute_scale_and_offset(colmap_depth, predicted_depth)
@@ -146,7 +170,7 @@ class VisualPipeline:
         # Display the second depth image
         plt.subplot(1, 3, 2)  # (1 row, 2 columns, second subplot)
         plt.imshow(predicted_depth, cmap='viridis')
-        plt.title('DPT Depth')
+        plt.title('Predicted Depth')
         plt.axis('off')  # Turn off axis numbers
         
         plt.subplot(1, 3, 3)  # (1 row, 2 columns, second subplot)
@@ -158,7 +182,7 @@ class VisualPipeline:
         plt.show()
         
         
-    def predict_depth_from_image(self, image, model_type='zoe'):
+    def predict_depth_from_image(self, image, model_type='dpt'):
         if model_type == 'zoe':
             depth = self.zoe_model.infer_pil(image)
         else:
@@ -170,4 +194,4 @@ class VisualPipeline:
 if __name__ == '__main__':
     visual_pipeline = VisualPipeline(root_img_dir='bunny_imgs', colmap_depth_dir='colmap_depth')
     
-    visual_pipeline.refine_depth_all_images(visualize=True)
+    visual_pipeline.refine_depth_all_images(visualize=False)
