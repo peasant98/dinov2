@@ -78,12 +78,30 @@ class VisualPipeline:
 
         if not os.path.exists(f'{self.output_depth_path}_npy'):
             os.mkdir(f'{self.output_depth_path}_npy')
+            
+        if not os.path.exists(f'{self.output_depth_path}_2_npy'):
+            os.mkdir(f'{self.output_depth_path}_2_npy')
+            
+        if not os.path.exists(f'{self.output_depth_path}_4_npy'):
+            os.mkdir(f'{self.output_depth_path}_4_npy')
+        
+        if not os.path.exists(f'{self.output_depth_path}_8_npy'):
+            os.mkdir(f'{self.output_depth_path}_8_npy')
 
         if not os.path.exists(f'{self.output_depth_path}_uncertainty'):
             os.mkdir(f'{self.output_depth_path}_uncertainty')
 
         if not os.path.exists(f'{self.output_depth_path}_uncertainty_npy'):
             os.mkdir(f'{self.output_depth_path}_uncertainty_npy')
+            
+        if not os.path.exists(f'{self.output_depth_path}_uncertainty_2_npy'):
+            os.mkdir(f'{self.output_depth_path}_uncertainty_2_npy')
+        
+        if not os.path.exists(f'{self.output_depth_path}_uncertainty_4_npy'):
+            os.mkdir(f'{self.output_depth_path}_uncertainty_4_npy')
+            
+        if not os.path.exists(f'{self.output_depth_path}_uncertainty_8_npy'):
+            os.mkdir(f'{self.output_depth_path}_uncertainty_8_npy')
         
     def get_images_and_colmap_depth_maps(self, scale=1):
         for idx, img_path in enumerate(self.img_paths):
@@ -130,6 +148,19 @@ class VisualPipeline:
             if self.save_as_npy:
                 file_path = os.path.join(f'{self.output_depth_path}_npy', f'{img_path}.npy')
                 save_depth_image_matrix_as_npy(refined_depth, file_path)
+                
+                # resize refined depth to half
+                refined_depth2 = cv2.resize(refined_depth, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+                file_path = os.path.join(f'{self.output_depth_path}_2_npy', f'{img_path}.npy')
+                save_depth_image_matrix_as_npy(refined_depth2, file_path)
+                
+                refined_depth4 = cv2.resize(refined_depth2, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+                file_path = os.path.join(f'{self.output_depth_path}_4_npy', f'{img_path}.npy')
+                save_depth_image_matrix_as_npy(refined_depth4, file_path)
+                
+                refined_depth8 = cv2.resize(refined_depth4, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+                file_path = os.path.join(f'{self.output_depth_path}_8_npy', f'{img_path}.npy')
+                save_depth_image_matrix_as_npy(refined_depth8, file_path)
             
             # compute uncertainty
             uncertainty = compute_uncertainty_map_with_edges(refined_depth, colmap_depth, edge_weight=1.0, distance_uncertainty_weight=0.02, proximity_weight=3.0)
@@ -145,7 +176,19 @@ class VisualPipeline:
             if self.save_as_npy:
                 file_path = os.path.join(f'{self.output_depth_path}_uncertainty_npy', f'{img_path}.npy')
                 save_depth_image_matrix_as_npy(uncertainty, file_path)
-
+                
+                uncertainty2 = cv2.resize(refined_depth, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+                file_path = os.path.join(f'{self.output_depth_path}_uncertainty_2_npy', f'{img_path}.npy')
+                save_depth_image_matrix_as_npy(uncertainty2, file_path)
+                
+                uncertainty4 = cv2.resize(refined_depth2, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+                file_path = os.path.join(f'{self.output_depth_path}_uncertainty_4_npy', f'{img_path}.npy')
+                save_depth_image_matrix_as_npy(uncertainty4, file_path)
+                
+                uncertainty8 = cv2.resize(refined_depth4, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+                file_path = os.path.join(f'{self.output_depth_path}_uncertainty_8_npy', f'{img_path}.npy')
+                save_depth_image_matrix_as_npy(uncertainty8, file_path)
+                
     def refine_depth(self, predicted_depth, colmap_depth):
             
         scale, offset = compute_scale_and_offset(colmap_depth, predicted_depth)
@@ -194,4 +237,4 @@ class VisualPipeline:
 if __name__ == '__main__':
     visual_pipeline = VisualPipeline(root_img_dir='bunny_imgs', colmap_depth_dir='colmap_depth')
     
-    visual_pipeline.refine_depth_all_images(visualize=False)
+    visual_pipeline.refine_depth_all_images(visualize=True)
