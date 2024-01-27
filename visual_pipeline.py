@@ -20,7 +20,7 @@ def get_colmap_depth(root_dir, idx, scale=1000):
 
     full_depth_image_path = os.path.join(root_dir, depth_valid_selected)
     depth_image = cv2.imread(full_depth_image_path, cv2.IMREAD_UNCHANGED)/ scale
-    depth_image = depth_image[:1099, :1799]
+    # depth_image = depth_image[:1099, :1799]
     return depth_image
 
 
@@ -51,7 +51,7 @@ def compute_scale_and_offset(sparse_depth, dense_depth):
 
 
 class VisualPipeline:
-    def __init__(self, root_img_dir, colmap_depth_dir='colmap_depth', output_depth_path='dense_depth', save_as_npy=True, scale_factor=1000):
+    def __init__(self, root_img_dir, colmap_depth_dir='colmap_blender_depth', output_depth_path='dense_blender_depth', save_as_npy=True, scale_factor=1000):
         """Initializes the visual pipeline
 
         Args:
@@ -103,7 +103,7 @@ class VisualPipeline:
         if not os.path.exists(f'{self.output_depth_path}_uncertainty_8_npy'):
             os.mkdir(f'{self.output_depth_path}_uncertainty_8_npy')
         
-    def get_images_and_colmap_depth_maps(self, scale=1):
+    def get_images_and_colmap_depth_maps(self, scale=1000):
         for idx, img_path in enumerate(self.img_paths):
             full_path = os.path.join(self.root_img_dir, img_path)
             image = open_image(full_path)
@@ -126,6 +126,14 @@ class VisualPipeline:
     def refine_depth_all_images(self, visualize=False):
         for i in range(len(self.images)):
             # predict depth from image
+            
+            img_np = np.array(self.images[i])
+            
+            if len(img_np.shape) > 2 and img_np.shape[2] == 4:
+                #convert the image from RGBA2RGB
+                img_np = cv2.cvtColor(img_np, cv2.COLOR_BGRA2BGR)
+            self.images[i] = Image.fromarray(img_np)
+            
             predicted_depth = self.predict_depth_from_image(self.images[i])
             print(predicted_depth)
             # get colmap sparse(ish) depth
@@ -134,8 +142,8 @@ class VisualPipeline:
             
             # refine depth with a scale factor and offset
             refined_depth = self.refine_depth(predicted_depth, colmap_depth)
-            if visualize:
-                self.visualize(colmap_depth, predicted_depth, refined_depth)
+            # if visualize:
+            #     self.visualize(colmap_depth, predicted_depth, refined_depth)
             
             # get image path 
             img_path = self.img_paths[i].split('.')[0][7:]
@@ -163,9 +171,9 @@ class VisualPipeline:
                 save_depth_image_matrix_as_npy(refined_depth8, file_path)
             
             # compute uncertainty
-            uncertainty = compute_uncertainty_map_with_edges(refined_depth, colmap_depth, edge_weight=1.0, distance_uncertainty_weight=0.02, proximity_weight=3.0)
+            uncertainty = compute_uncertainty_map_with_edges(refined_depth, colmap_depth, edge_weight=5.0, distance_uncertainty_weight=0.02, proximity_weight=10.0)
             if visualize:
-                self.visualize(colmap_depth, refined_depth, uncertainty)
+                self.visualize(colmap_depth, refined_depth, uncertainty, labels=['Colmap Depth', 'Refined Depth', 'Depth Uncertainty'])
 
             # create uncertainty depth image and npy file
                 
@@ -198,7 +206,7 @@ class VisualPipeline:
         
         return final_depth
             
-    def visualize(self, colmap_depth, predicted_depth, refined_depth):
+    def visualize(self, colmap_depth, predicted_depth, refined_depth, labels=['Colmap Depth', 'Predicted Depth', 'Refined Depth']):
         # Apply a colormap for visualization
         # You can change 'plasma' to any other colormap (like 'viridis', 'magma', etc.)
         
@@ -207,18 +215,18 @@ class VisualPipeline:
         # Display the first depth image
         plt.subplot(1, 3, 1)  # (1 row, 2 columns, first subplot)
         plt.imshow(colmap_depth, cmap='viridis')
-        plt.title('Colmap Depth')
+        plt.title(labels[0])
         plt.axis('off')  # Turn off axis numbers
 
         # Display the second depth image
         plt.subplot(1, 3, 2)  # (1 row, 2 columns, second subplot)
         plt.imshow(predicted_depth, cmap='viridis')
-        plt.title('Predicted Depth')
+        plt.title(labels[1])
         plt.axis('off')  # Turn off axis numbers
         
         plt.subplot(1, 3, 3)  # (1 row, 2 columns, second subplot)
         plt.imshow(refined_depth, cmap='viridis')
-        plt.title('Final Depth')
+        plt.title(labels[2])
         plt.axis('off')  # Turn off axis numbers
 
         # Show the plot
@@ -235,6 +243,6 @@ class VisualPipeline:
 
 
 if __name__ == '__main__':
-    visual_pipeline = VisualPipeline(root_img_dir='bunny_imgs', colmap_depth_dir='colmap_depth')
+    visual_pipeline = VisualPipeline(root_img_dir='bunny_blender_imgs', colmap_depth_dir='sparse_colmap_depth')
     
-    visual_pipeline.refine_depth_all_images(visualize=True)
+    visual_pipeline.refine_depth_all_images(visualize=False)
