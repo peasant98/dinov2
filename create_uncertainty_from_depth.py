@@ -33,7 +33,7 @@ def create_uncertainty_from_depth(depth, colmap_points, alpha=0.5, max_depth=100
     return uncertainty
 
 
-def compute_uncertainty_map_with_edges(dense_depth, sparse_depth,edge_weight=1.0, distance_uncertainty_weight=0.01, proximity_weight=0.5, dilation_size=1):
+def compute_uncertainty_map_with_edges(dense_depth, sparse_depth,edge_weight=1.0, distance_uncertainty_weight=0.01, proximity_weight=0.5, dilation_size=1, depth_difference_weight=1.0):
     """
     Compute an uncertainty map from dense and sparse depth images,
     adding extra uncertainty to edges.
@@ -61,7 +61,7 @@ def compute_uncertainty_map_with_edges(dense_depth, sparse_depth,edge_weight=1.0
     # Edge detection using Sobel operator
     edge_x = sobel(dense_depth, axis=0)
     edge_y = sobel(dense_depth, axis=1)
-    edge_magnitude = 10 * np.sqrt(edge_x**2 + edge_y**2)
+    edge_magnitude = 20 * np.sqrt(edge_x**2 + edge_y**2)
     edge_uncertainty = (edge_magnitude / np.max(edge_magnitude)) * edge_weight
     
     edge_mask = edge_magnitude > np.percentile(edge_magnitude, 97)  # Threshold to identify significant edges
@@ -73,8 +73,9 @@ def compute_uncertainty_map_with_edges(dense_depth, sparse_depth,edge_weight=1.0
     
     depth_difference_uncertainty = np.abs(dense_depth - sparse_depth)
     depth_difference_uncertainty[~sparse_mask] = 0  # Ignore where sparse depth is not available
-    depth_difference_uncertainty /= np.max(depth_difference_uncertainty) # Normalize * 100
-
+    # depth_difference_uncertainty /= np.max(depth_difference_uncertainty) # Normalize * 100
+    depth_difference_uncertainty *= depth_difference_weight
+    
     
     # Combine the uncertainties
     uncertainty_map = distance_uncertainty +  proximity_uncertainty + edge_uncertainty + depth_difference_uncertainty

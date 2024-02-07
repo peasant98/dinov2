@@ -5,6 +5,8 @@ import cv2
 import numpy as np
 
 from dpt_module import DPT
+from transformers import pipeline
+
 from utils import save_depth_image_matrix_as_npy
 from zoe_depth import get_zoe_model
 from create_uncertainty_from_depth import compute_uncertainty_map_with_edges
@@ -19,8 +21,11 @@ def get_colmap_depth(root_dir, idx, scale=1000):
     depth_valid_selected = depth_paths_sorted[idx]
 
     full_depth_image_path = os.path.join(root_dir, depth_valid_selected)
-    depth_image = cv2.imread(full_depth_image_path, cv2.IMREAD_UNCHANGED)/ scale
+    print('Loading colmap depth image:', full_depth_image_path)
+    depth_image = cv2.imread(full_depth_image_path, cv2.IMREAD_UNCHANGED).astype(np.float64)/ scale
+
     # depth_image = depth_image[:1099, :1799]
+    
     return depth_image
 
 
@@ -51,7 +56,7 @@ def compute_scale_and_offset(sparse_depth, dense_depth):
 
 
 class VisualPipeline:
-    def __init__(self, root_img_dir, colmap_depth_dir='colmap_blender_depth', output_depth_path='dense_blender_depth', save_as_npy=True, scale_factor=1000):
+    def __init__(self, root_img_dir, colmap_depth_dir='colmap_blender_depth', output_depth_path='dense_blender_28_depth', save_as_npy=True, scale_factor=1000):
         """Initializes the visual pipeline
 
         Args:
@@ -59,6 +64,8 @@ class VisualPipeline:
         """
         self.dpt_model = DPT()
         self.zoe_model = get_zoe_model()
+        self.depth_anything_model = pipeline(task="depth-estimation", model="LiheYoung/depth-anything-large-hf")
+        
         self.root_img_dir = root_img_dir
         self.colmap_depth_dir = colmap_depth_dir
         
@@ -124,6 +131,7 @@ class VisualPipeline:
         return self.colmap_depth_images
     
     def refine_depth_all_images(self, visualize=False):
+        errs = []
         for i in range(len(self.images)):
             # predict depth from image
             
@@ -135,23 +143,41 @@ class VisualPipeline:
             self.images[i] = Image.fromarray(img_np)
             
             predicted_depth = self.predict_depth_from_image(self.images[i])
-            print(predicted_depth)
             # get colmap sparse(ish) depth
             colmap_depth = self.colmap_depth_images[i]
             
-            
             # refine depth with a scale factor and offset
+            # predicted_depth = predicted_depth / -1
             refined_depth = self.refine_depth(predicted_depth, colmap_depth)
-            # if visualize:
-            #     self.visualize(colmap_depth, predicted_depth, refined_depth)
+            # self.visualize(colmap_depth, predicted_depth, refined_depth)
+            
+            valid_locations = np.logical_and(~np.isnan(colmap_depth), colmap_depth != 0)
+
+            # Compute the difference only at valid locations
+            difference = np.abs(refined_depth - colmap_depth) * valid_locations
+
+            # Calculate the average error (excluding invalid locations)
+            average_error = np.sum(difference) / np.sum(valid_locations)
+            errs.append(average_error)
+            print(average_error)
+            if visualize:
+                self.visualize(predicted_depth, refined_depth, predicted_depth - refined_depth, labels=['Zoe Depth', 'Refined Depth', 'Depth Difference'])
             
             # get image path 
             img_path = self.img_paths[i].split('.')[0][7:]
             print(img_path)
             # # construct file path and save as depth image
+            # final_depth_int = (self.scale_factor * refined_depth).astype(np.uint16)
             final_depth_int = (self.scale_factor * refined_depth).astype(np.uint16)
-            cv2.imwrite(f'{self.output_depth_path}/{img_path}.png', final_depth_int)
-            print(f'Saved depth image {self.output_depth_path}/{img_path}.png')
+            
+            
+            depth_paths = os.listdir(self.colmap_depth_dir)
+            depth_paths_sorted = sorted(depth_paths)
+            
+            depth_valid_selected = depth_paths_sorted[i]
+                    
+            cv2.imwrite(f'{self.output_depth_path}/{depth_valid_selected}', final_depth_int)
+            print(f'Saved depth image {self.output_depth_path}/{depth_valid_selected}')
             # # save depth image matrix as npy
             if self.save_as_npy:
                 file_path = os.path.join(f'{self.output_depth_path}_npy', f'{img_path}.npy')
@@ -171,15 +197,15 @@ class VisualPipeline:
                 save_depth_image_matrix_as_npy(refined_depth8, file_path)
             
             # compute uncertainty
-            uncertainty = compute_uncertainty_map_with_edges(refined_depth, colmap_depth, edge_weight=5.0, distance_uncertainty_weight=0.02, proximity_weight=10.0)
+            uncertainty = compute_uncertainty_map_with_edges(refined_depth, colmap_depth, edge_weight=0, distance_uncertainty_weight=0.04, proximity_weight=50, depth_difference_weight=0, dilation_size=5)
             if visualize:
                 self.visualize(colmap_depth, refined_depth, uncertainty, labels=['Colmap Depth', 'Refined Depth', 'Depth Uncertainty'])
 
             # create uncertainty depth image and npy file
                 
             final_depth_uncertainty_int = (self.scale_factor * uncertainty).astype(np.uint16)
-            cv2.imwrite(f'{self.output_depth_path}_uncertainty/{img_path}.png', final_depth_uncertainty_int)
-            print(f'Saved depth uncertainty image {self.output_depth_path}_uncertainty/{img_path}.png')
+            cv2.imwrite(f'{self.output_depth_path}_uncertainty/{depth_valid_selected}', final_depth_uncertainty_int)
+            print(f'Saved depth uncertainty image {self.output_depth_path}_uncertainty/{depth_valid_selected}')
                 
             if self.save_as_npy:
                 file_path = os.path.join(f'{self.output_depth_path}_uncertainty_npy', f'{img_path}.npy')
@@ -196,6 +222,7 @@ class VisualPipeline:
                 uncertainty8 = cv2.resize(refined_depth4, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
                 file_path = os.path.join(f'{self.output_depth_path}_uncertainty_8_npy', f'{img_path}.npy')
                 save_depth_image_matrix_as_npy(uncertainty8, file_path)
+            print('average error:', np.mean(errs))
                 
     def refine_depth(self, predicted_depth, colmap_depth):
             
@@ -236,6 +263,8 @@ class VisualPipeline:
     def predict_depth_from_image(self, image, model_type='zoe'):
         if model_type == 'zoe':
             depth = self.zoe_model.infer_pil(image)
+        elif model_type == 'depth_anything':
+            depth = np.asarray(self.depth_anything_model(image)["depth"])
         else:
             depth = self.dpt_model(image)
             
@@ -243,6 +272,8 @@ class VisualPipeline:
 
 
 if __name__ == '__main__':
-    visual_pipeline = VisualPipeline(root_img_dir='bunny_blender_imgs', colmap_depth_dir='sparse_colmap_depth')
+    visual_pipeline = VisualPipeline(root_img_dir='images_28', colmap_depth_dir='cmap_depth')
+    
+    # visual_pipeline = VisualPipeline(root_img_dir='bunny_square_images', colmap_depth_dir='bunny_square_sparse', output_depth_path='bunny_square_dense_depth')
     
     visual_pipeline.refine_depth_all_images(visualize=False)
