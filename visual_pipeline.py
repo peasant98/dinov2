@@ -18,22 +18,33 @@ def get_colmap_depth(root_dir, idx, scale=1000):
     depth_paths = os.listdir(root_dir)
     depth_paths_sorted = sorted(depth_paths)
     
+    error_img_exists = False
+    for depth_path in depth_paths_sorted:
+        if 'error' in depth_path:
+            error_img_exists = True
+            break
+        
+    error_image = None
+    if error_img_exists:
+        idx = idx * 2
+        error_valid_selected = depth_paths_sorted[idx+1]
+        full_error_image_path = os.path.join(root_dir, error_valid_selected)
+        print('Loading colmap error depth image:', full_error_image_path)
+        error_image = cv2.imread(full_error_image_path, cv2.IMREAD_UNCHANGED).astype(np.float64)/ scale
+    
     depth_valid_selected = depth_paths_sorted[idx]
-
     full_depth_image_path = os.path.join(root_dir, depth_valid_selected)
     print('Loading colmap depth image:', full_depth_image_path)
     depth_image = cv2.imread(full_depth_image_path, cv2.IMREAD_UNCHANGED).astype(np.float64)/ scale
-
-    # depth_image = depth_image[:1099, :1799]
     
-    return depth_image
+    return depth_image, error_image
 
 
 def open_image(image_path):
     image = Image.open(image_path)
     return image
 
-def compute_scale_and_offset(sparse_depth, dense_depth):
+def compute_scale_and_offset(sparse_depth, dense_depth, weights=None):
     """
     Compute the scale factor and offset between sparse and dense depth maps.
 
@@ -43,16 +54,31 @@ def compute_scale_and_offset(sparse_depth, dense_depth):
     """
     # Mask to consider only the non-zero elements of the sparse depth map
     mask = sparse_depth > 0
+    if weights is None:
+        # Flattening the arrays and applying the mask
+        sparse_depth_flat = sparse_depth[mask].flatten()
+        dense_depth_flat = dense_depth[mask].flatten()
 
-    # Flattening the arrays and applying the mask
-    sparse_depth_flat = sparse_depth[mask].flatten()
-    dense_depth_flat = dense_depth[mask].flatten()
+        # Performing linear regression
+        A = np.vstack([dense_depth_flat, np.ones_like(dense_depth_flat)]).T
+        scale_factor, offset = np.linalg.lstsq(A, sparse_depth_flat, rcond=None)[0]
 
-    # Performing linear regression
-    A = np.vstack([dense_depth_flat, np.ones_like(dense_depth_flat)]).T
-    scale_factor, offset = np.linalg.lstsq(A, sparse_depth_flat, rcond=None)[0]
+        return scale_factor, offset
+    else:
+        sparse_depth_flat = sparse_depth[mask].flatten()
+        dense_depth_flat = dense_depth[mask].flatten()
+        weights_flat = weights[mask].flatten()
 
-    return scale_factor, offset
+        # Incorporating weights into the linear regression
+        W = np.diag(weights_flat)
+        A = np.vstack([dense_depth_flat, np.ones_like(dense_depth_flat)]).T
+        AW = np.dot(W, A)
+        BW = np.dot(W, sparse_depth_flat)
+
+        # Performing weighted least squares regression
+        scale_factor, offset = np.linalg.lstsq(AW, BW, rcond=None)[0]
+        
+        return scale_factor, offset
 
 
 class VisualPipeline:
@@ -71,8 +97,10 @@ class VisualPipeline:
         
         self.img_paths = sorted(os.listdir(self.root_img_dir))
         
+        
         self.images = []
         self.colmap_depth_images = []
+        self.colmap_errors_images = []
         
         self.get_images_and_colmap_depth_maps()
         
@@ -116,12 +144,16 @@ class VisualPipeline:
             image = open_image(full_path)
             self.images.append(image)
             
-            # get colmap depth images
-            colmap_depth = get_colmap_depth(self.colmap_depth_dir, idx, scale=scale)
+            # get colmap depth and corresponding error if it exists
+            colmap_depth, error_image = get_colmap_depth(self.colmap_depth_dir, idx, scale=scale)
             self.colmap_depth_images.append(colmap_depth)
+            if error_image is not None:
+                self.colmap_errors_images.append(error_image)
             
             print('Loaded:', full_path)
             
+    def get_colmap_errors_images(self):
+        return self.colmap_errors_images
             
         
     def get_images(self):
@@ -130,7 +162,7 @@ class VisualPipeline:
     def get_colmap_depth_images(self):
         return self.colmap_depth_images
     
-    def refine_depth_all_images(self, visualize=False):
+    def refine_depth_all_images(self, visualize=False, normalize_by_reproj_err=False):
         errs = []
         for i in range(len(self.images)):
             # predict depth from image
@@ -146,10 +178,22 @@ class VisualPipeline:
             # get colmap sparse(ish) depth
             colmap_depth = self.colmap_depth_images[i]
             
+            if normalize_by_reproj_err:
+                error_img = self.colmap_errors_images[i]
+                reciprocal_error_img = 1 / error_img
+                reciprocal_error_img[error_img == 0] = 0
+                
+                max_value = reciprocal_error_img[reciprocal_error_img.nonzero()].max()
+                
+                normalized_error_map = reciprocal_error_img / max_value
+                
+                normalized_error_map[error_img == 0] = 0
+                refined_depth = self.refine_depth(predicted_depth, colmap_depth, normalized_error_map)
+                
+            else:
+                refined_depth = self.refine_depth(predicted_depth, colmap_depth, None)
             # refine depth with a scale factor and offset
             # predicted_depth = predicted_depth / -1
-            refined_depth = self.refine_depth(predicted_depth, colmap_depth)
-            # self.visualize(colmap_depth, predicted_depth, refined_depth)
             
             valid_locations = np.logical_and(~np.isnan(colmap_depth), colmap_depth != 0)
 
@@ -159,13 +203,11 @@ class VisualPipeline:
             # Calculate the average error (excluding invalid locations)
             average_error = np.sum(difference) / np.sum(valid_locations)
             errs.append(average_error)
-            print(average_error)
             if visualize:
                 self.visualize(predicted_depth, refined_depth, predicted_depth - refined_depth, labels=['Zoe Depth', 'Refined Depth', 'Depth Difference'])
             
             # get image path 
             img_path = self.img_paths[i].split('.')[0][7:]
-            print(img_path)
             # # construct file path and save as depth image
             # final_depth_int = (self.scale_factor * refined_depth).astype(np.uint16)
             final_depth_int = (self.scale_factor * refined_depth).astype(np.uint16)
@@ -174,7 +216,10 @@ class VisualPipeline:
             depth_paths = os.listdir(self.colmap_depth_dir)
             depth_paths_sorted = sorted(depth_paths)
             
-            depth_valid_selected = depth_paths_sorted[i]
+            if len(self.colmap_errors_images) > 0:
+                depth_valid_selected = depth_paths_sorted[i*2]
+            else:
+                depth_valid_selected = depth_paths_sorted[i]
                     
             cv2.imwrite(f'{self.output_depth_path}/{depth_valid_selected}', final_depth_int)
             print(f'Saved depth image {self.output_depth_path}/{depth_valid_selected}')
@@ -222,11 +267,11 @@ class VisualPipeline:
                 uncertainty8 = cv2.resize(refined_depth4, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
                 file_path = os.path.join(f'{self.output_depth_path}_uncertainty_8_npy', f'{img_path}.npy')
                 save_depth_image_matrix_as_npy(uncertainty8, file_path)
-            print('average error:', np.mean(errs))
+        print('average error:', np.mean(errs))
                 
-    def refine_depth(self, predicted_depth, colmap_depth):
+    def refine_depth(self, predicted_depth, colmap_depth, error_map=None):
             
-        scale, offset = compute_scale_and_offset(colmap_depth, predicted_depth)
+        scale, offset = compute_scale_and_offset(colmap_depth, predicted_depth, error_map)
         final_depth = (scale * predicted_depth) + offset
         print('Scale:', scale)
         print('Offset:', offset)
